@@ -1,0 +1,240 @@
+---
+title: "Graduate Energy Informatics Project Group 2"
+author: "Charlie McCollough"
+date: "2024-04-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, EVAL = TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Vehicle Emissions G/H Project
+
+### Energy Informatics
+
+### Group 2
+
+------------------------------------------------------------------------
+
+##### Install Packages
+
+```{r}
+suppressMessages(suppressWarnings({
+  library(ggplot2)
+  library(dplyr)
+  library(rpart)
+  library(rpart.plot)
+  library(readxl)
+  library(corrplot)
+  library(fastDummies)
+}))
+```
+
+##### Load Data
+
+```{r}
+# Load the data
+fuel_data <- read_excel("FuelConsumption - IMPROVED.xlsx")
+fuel_data <- subset(fuel_data, select = -Year)
+
+fuel_data$MAKE <- factor(fuel_data$MAKE)
+fuel_data$MODEL <- factor(fuel_data$MODEL)
+fuel_data$`VEHICLE CLASS` <- factor(fuel_data$`VEHICLE CLASS`)
+fuel_data$SIZE <- factor(fuel_data$SIZE)
+fuel_data$TRANSMISSION <- factor(fuel_data$TRANSMISSION)
+fuel_data$FUEL <- factor(fuel_data$FUEL)
+```
+
+```{r}
+paste(colnames(fuel_data), collapse = ", ")
+```
+
+##### Data Transform
+
+```{r}
+#Im taking out Fuel as there isnt much of a distribution in the data set
+#fuel_data_dummies <- dummy_cols(fuel_data, select_columns = c("VEHICLE CLASS", "SIZE", "FUEL"))
+fuel_data_dummies <- dummy_cols(fuel_data, select_columns = c("VEHICLE CLASS", "SIZE"))
+fuel_data_dummies <- subset(fuel_data_dummies, select = -c(MAKE, MODEL, `VEHICLE CLASS`, SIZE, TRANSMISSION, FUEL, `FUEL CONSUMPTION`))
+
+#paste(colnames(fuel_data_dummies), collapse = ", ")
+```
+
+```{r}
+head(fuel_data)
+```
+
+------------------------------------------------------------------------
+
+##### Summary Statistics
+
+```{r}
+# Summary statistics for numerical variables
+numerical_summary <- sapply(fuel_data[, sapply(fuel_data, is.numeric)], function(x) {
+    c(mean=mean(x, na.rm=TRUE), sd=sd(x, na.rm=TRUE), 
+      min=min(x, na.rm=TRUE), median=median(x, na.rm=TRUE), max=max(x, na.rm=TRUE))
+})
+numerical_summary
+```
+
+```{r}
+categorical_variables <- sapply(fuel_data, is.factor)
+categorical_variables["MODEL"] <- FALSE  
+
+
+categorical_summary <- sapply(fuel_data[, categorical_variables], table)
+categorical_summary
+```
+
+```{r}
+# Descriptive Statistics Visualization
+# Histograms for numerical variables
+num_vars <- names(fuel_data[, sapply(fuel_data, is.numeric)])
+par(mfrow=c(2, 2)) # Adjust the grid layout based on the number of variables
+for (var in num_vars) {
+  hist(fuel_data[[var]], main=paste("Histogram of", var), xlab=var)
+}
+```
+
+##### Correlation Matrix
+
+```{r}
+# correlation Matrix
+numeric_columns <- sapply(fuel_data, is.numeric)
+cor_matrix <- cor(fuel_data[, numeric_columns & !names(fuel_data) %in% c("Year")])
+
+corrplot(cor_matrix, method='number')
+```
+
+------------------------------------------------------------------------
+
+##### Linear Regressions
+
+###### Simple Linear Regression
+
+```{r}
+fuel_lm_model1 <- lm(COEMISSIONS ~ `ENGINE SIZE` + `NUMBER OF GEARS`, data=fuel_data)
+summary(fuel_lm_model1)
+```
+
+###### Linear Regressions with Dummy Vars
+
+*I'm going to take out the 'NUMBER OF GEARS' variable as it is not significant, and add the categorical variables that I made.*
+
+```{r}
+fuel_lm_model2 <- lm(COEMISSIONS ~ `ENGINE SIZE` + `VEHICLE CLASS`, data=fuel_data)
+summary(fuel_lm_model2)
+```
+
+*Now adding 'SIZE' also*
+
+```{r}
+fuel_lm_model2 <- lm(COEMISSIONS ~ `ENGINE SIZE` + `VEHICLE CLASS` + SIZE, data=fuel_data)
+summary(fuel_lm_model2)
+```
+
+*Adding 'FUEL'*
+
+```{r}
+fuel_lm_model3 <- lm(COEMISSIONS ~ `ENGINE SIZE` + `VEHICLE CLASS` + SIZE + FUEL, data=fuel_data)
+summary(fuel_lm_model3)
+```
+
+*Taking out FUEL as it was not statistically significant, doing what I want now*
+
+```{r}
+fuel_lm_model4 <- lm(COEMISSIONS ~ `ENGINE SIZE` + `VEHICLE CLASS` + SIZE + TRANSMISSION, data=fuel_data)
+summary(fuel_lm_model4)
+```
+
+```{r}
+library(modelsummary)
+
+model_list <- list(
+  "Model 1" = fuel_lm_model1,
+  "Model 2" = fuel_lm_model2,
+  "Model 3" = fuel_lm_model3,
+  "Model 4" = fuel_lm_model4
+)
+
+summary_table <- modelsummary(model_list)
+
+summary_table
+```
+
+
+```{r}
+library(stargazer)
+
+stargazer(fuel_lm_model1, fuel_lm_model2, fuel_lm_model3, fuel_lm_model4,
+          type = "text", title = "Model Summary",
+          align = TRUE, header = FALSE)
+```
+
+------------------------------------------------------------------------
+
+###### Ridge Regression
+
+```{r}
+#str(fuel_data_dummies)
+```
+
+```{r}
+#install.packages("glmnet")
+library(glmnet)
+```
+
+```{r}
+y <- fuel_data_dummies$COEMISSIONS
+lambda_values <- 10^seq(10, -2, length = 100)
+
+ridge_model <- glmnet(fuel_data_dummies, y, alpha = 0, lambda = lambda_values)
+```
+
+```{r}
+#This will spit out all of the coefficients
+
+#coef(ridge_model, s = 0.01)
+```
+
+```{r}
+coef_matrix <- as.matrix(coef(ridge_model, s = 0.01))
+
+coef_df <- as.data.frame(coef_matrix, stringsAsFactors = FALSE)
+names(coef_df) <- "Coefficient"
+
+coef_df$Variable <- rownames(coef_df)
+
+coef_df <- coef_df[order(-abs(coef_df$Coefficient)), ]
+
+top_10_coef <- head(coef_df, 10)
+print(top_10_coef)
+```
+
+```{r}
+x <- as.matrix(fuel_data_dummies %>% dplyr::select(-c(COEMISSIONS)))
+y <- fuel_data_dummies$COEMISSIONS
+
+cv_ridge <- cv.glmnet(x, y, alpha = 0)
+
+plot(cv_ridge)
+```
+
+```{r}
+
+best_lambda <- cv_ridge$lambda.min
+
+final_model <- glmnet(fuel_data_dummies, y, alpha = 0, lambda = best_lambda)
+
+final_coef <- coef(final_model, s = best_lambda)
+final_coef_matrix <- as.matrix(final_coef)
+
+final_coef_df <- as.data.frame(final_coef_matrix, stringsAsFactors = FALSE)
+names(final_coef_df) <- "Coefficient"
+final_coef_df$Variable <- rownames(final_coef_df)
+
+final_coef_df <- final_coef_df[order(-abs(final_coef_df$Coefficient)), ]
+top_10_final_coef <- head(final_coef_df, 10)
+print(top_10_final_coef)
+```
